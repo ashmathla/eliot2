@@ -248,11 +248,16 @@ def analyze_market(symbol, candle_limit):
         resolve_timeframe_conflict,
         get_entry_signal,
     )
+    
+    # ✅ CHANGE: مرر w1_direction و d1_direction و h4_direction
     conflict_result = resolve_timeframe_conflict(
         wave_map["W1"]["elliott"],
         wave_map["D1"]["elliott"],
         wave_map["H1"]["elliott"],
-        h4_elliott = wave_map["H4"]["elliott"],
+        h4_elliott      = wave_map["H4"]["elliott"],
+        w1_direction    = wave_map["W1"].get("direction"),  # ✅ أضفنا هنا
+        d1_direction    = wave_map["D1"].get("direction"),  # ✅ أضفنا هنا
+        h4_direction    = wave_map["H4"].get("direction"),  # ✅ أضفنا هنا
     )
 
     signal = build_signal(
