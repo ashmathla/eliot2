@@ -37,6 +37,13 @@ def _is_correction(pattern: str) -> bool:
     return pattern in CORRECTION_PATTERNS
 
 
+def _is_undefined(pattern: str) -> bool:
+    """
+    يفحص ما إذا كان pattern غير محدد (unknown أو empty).
+    """
+    return pattern in ("unknown", "", None)
+
+
 def _check_h4_confirmation(
     primary_bias: str, h4_elliott: dict, h4_direction: str | None = None
 ) -> dict:
@@ -114,6 +121,10 @@ def resolve_timeframe_conflict(
     يحل التعارض بين timeframes ويحدد السياق الحقيقي.
     القاعدة: W1 > D1 > H4 > H1.
 
+    ✅ CHANGE: الآن يتعامل مع حالة D1 = unknown
+    لو W1 واضح و D1 غير محدد → لا تعارض، بل "undefined D1"
+    يسمح بدخول بناءً على W1 لكن مع تنبيه انتظار تأكيد D1
+
     CHANGE: تستقبل الآن w1_direction/d1_direction/h4_direction
     (اختيارية، تأتي من wave_map[tf]["direction"]) لتحديد الـ bias
     الفعلي لأي pattern تصحيحي (zigzag/flat/triangle) بدل الاعتماد
@@ -128,6 +139,8 @@ def resolve_timeframe_conflict(
     w1_bias = _bias_of(w1_pattern, w1_direction)
     d1_bias = _bias_of(d1_pattern, d1_direction)
 
+    d1_is_undefined = _is_undefined(d1_pattern)
+
     # هل D1 اكتملت؟
     if _is_correction(d1_pattern):
         d1_completed = d1_next == "trend_resumption"
@@ -136,10 +149,38 @@ def resolve_timeframe_conflict(
 
     base_result = None
 
-    # ══════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════
+    # ✅ CASE UNDEFINED: W1 واضح لكن D1 غير محدد (unknown)
+    # ──────────────────────────────────────────────────────────────────────────
+    # المشكلة السابقة: كانت تعود تعارض مباشرة
+    # الحل الجديد: نقبل W1 لكن مع تنبيه انتظار تأكيد D1
+    # ══════════════════════════════════════════════════════════════════════════
+    if (
+        base_result is None
+        and w1_bias is not None
+        and w1_next == "wave_A"  # W1 انتهى من impulse
+        and d1_is_undefined  # ← المفتاح: D1 لا توجد بيانات كافية
+    ):
+        primary_bias = w1_bias
+        action_verb  = "BUY" if primary_bias == "bullish" else "SELL"
+
+        base_result = {
+            "conflict"    : False,  # ✅ ليس تعارضاً — D1 فقط غير محدد
+            "context"     : (
+                f"W1={w1_pattern} واضح ({primary_bias}) لكن D1 بدون بيانات كافية "
+                f"— انتظر تأكيد D1"
+            ),
+            "primary_bias": primary_bias,
+            "d1_role"     : "undefined",  # بدل "conflicting"
+            "d1_completed": False,
+            "action"      : f"انتظر تأكيد D1 قبل {action_verb}",
+            "entry_timing": "D1_confirmation",
+        }
+
+    # ══════════════════════════════════════════════════════════════════════════
     # CASE NEW: W1 انتهى من impulse + D1 = تصحيح (أي نمط تصحيحي)
-    # ══════════════════════════════════════════════
-    if w1_next == "wave_A" and _is_correction(d1_pattern):
+    # ══════════════════════════════════════════════════════════════════════════
+    if base_result is None and w1_next == "wave_A" and _is_correction(d1_pattern):
 
         primary_bias = w1_bias
         action_verb  = "BUY" if primary_bias == "bullish" else (
@@ -173,11 +214,11 @@ def resolve_timeframe_conflict(
                     "entry_timing": "H1",
                 }
 
-    # ══════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════
     # CASE A/B: W1 انتهى impulse + D1 تصحيح بعكس اتجاه W1
     # (نفس فكرة CASE NEW لكن بدون شرط w1_next == "wave_A" الحرفي،
     # تغطي أي تصحيح فعلي بعكس اتجاه W1 بغض النظر عن next_wave)
-    # ══════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════
     if (
         base_result is None
         and w1_bias is not None
@@ -207,11 +248,11 @@ def resolve_timeframe_conflict(
                 "entry_timing": "H1",
             }
 
-    # ══════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════
     # CASE C: توافق كامل W1+D1 — نفس bias الفعلي
     # CHANGE: بدل `"bearish" in w1_pattern and "bearish" in d1_pattern`
     # (يفشل مع zigzag)، نقارن w1_bias/d1_bias الفعليين.
-    # ══════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════
     if (
         base_result is None
         and w1_bias is not None
@@ -230,10 +271,10 @@ def resolve_timeframe_conflict(
             "entry_timing": "H1",
         }
 
-    # ══════════════════════════════════════════════
+    # ═════════════════════════════════════════════════════��════════════════════
     # CASE D: تعارض مؤقت — W1 لسه في منتصف impulse، D1 بعكسه تماماً
     # (D1 نفسه impulse معاكس، مو تصحيح طبيعي)
-    # ══════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════
     if (
         base_result is None
         and w1_bias is not None
@@ -252,9 +293,9 @@ def resolve_timeframe_conflict(
             "entry_timing": None,
         }
 
-    # ══════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════
     # الحالة الافتراضية: تعارض حقيقي (أو بيانات غير كافية لتحديد اتجاه)
-    # ══════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════
     if base_result is None:
         base_result = {
             "conflict"    : True,
@@ -301,7 +342,9 @@ def get_entry_signal(
 ) -> str:
     """
     يحدد إشارة الدخول النهائية بناءً على H1.
-    (لم يتغيّر هذا الجزء — المشكلة كانت فقط في resolve_timeframe_conflict)
+    
+    ✅ CHANGE: الآن يتعامل مع d1_role = "undefined"
+    إذا كان D1 غير محدد، نسمح بـ WAIT_BUY/WAIT_SELL بدل NO_TRADE
     """
 
     if conflict_result["conflict"]:
@@ -331,7 +374,8 @@ def get_entry_signal(
         if h4_blocked:
             return "WAIT_SELL"
 
-        if not d1_completed and d1_role == "corrective_wave_A_in_progress":
+        # ✅ CHANGE: إذا كان D1 غير محدد، نعامله مثل "in_progress"
+        if not d1_completed and d1_role in ("corrective_wave_A_in_progress", "undefined"):
             return "WAIT_SELL"
 
         if d1_completed or d1_role == "aligned":
@@ -361,7 +405,8 @@ def get_entry_signal(
         if h4_blocked:
             return "WAIT_BUY"
 
-        if not d1_completed and d1_role == "corrective_wave_A_in_progress":
+        # ✅ CHANGE: إذا كان D1 غير محدد، نعامله مثل "in_progress"
+        if not d1_completed and d1_role in ("corrective_wave_A_in_progress", "undefined"):
             return "WAIT_BUY"
 
         if d1_completed or d1_role == "aligned":
